@@ -38,10 +38,11 @@ async function runScraper() {
 
     const page = await ctx.newPage();
 
+    // URL CORRETTO: /Immobili (non /Aste?categoria=IMMOBILI)
     for (let p = 1; p <= MAX_PAGINE; p++) {
       const url = p === 1
-        ? 'https://www.astalegale.net/Aste?categoria=IMMOBILI'
-        : 'https://www.astalegale.net/Aste?categoria=IMMOBILI&pagina=' + p;
+        ? 'https://www.astalegale.net/Immobili'
+        : 'https://www.astalegale.net/Immobili?pagina=' + p;
 
       console.log('  Pagina ' + p + '/' + MAX_PAGINE + ': ' + url);
 
@@ -57,17 +58,22 @@ async function runScraper() {
       const pageTitle = await page.title().catch(() => 'N/A');
       console.log('  Titolo pagina: ' + pageTitle);
 
+      // Selettori per trovare link alle singole aste
       let links = [];
 
-      // Prova selettori specifici prima
       const selectors = [
         'a[href*="/Aste/Detail/"]',
         'a[href*="/aste/detail/"]',
+        '.asta-item a',
+        '.listing-item a',
+        '.card a[href*="Aste"]',
+        'article a[href*="Aste"]',
+        'h2 a', 'h3 a',
+        '.titolo a', 'a.titolo',
+        '[class*="asta"] a',
+        '[class*="lotto"] a',
+        '.list-group-item a',
         'a[href*="Detail"]',
-        '.asta-item a', '.listing-item a', '.card a',
-        'article a', '.immobile a', 'h2 a', 'h3 a',
-        '.titolo a', 'a.titolo', '[class*="asta"] a',
-        '[class*="lotto"] a', '.list-group-item a',
       ];
 
       for (const sel of selectors) {
@@ -75,7 +81,7 @@ async function runScraper() {
           const found = await page.$$eval(sel, els =>
             [...new Set(els
               .map(e => e.href)
-              .filter(h => h && h.includes('astalegale.net') && h.length > 40)
+              .filter(h => h && h.includes('astalegale.net') && (h.includes('/Aste/') || h.includes('Detail')) && h.length > 50)
             )]
           );
           if (found.length > 0) {
@@ -85,29 +91,24 @@ async function runScraper() {
         } catch (_) {}
       }
 
-      // Fallback: tutti i link della pagina
+      // Fallback totale
       if (links.length === 0) {
         try {
           const allLinks = await page.$$eval('a[href]', els =>
             els.map(e => e.href).filter(h =>
-              h && h.includes('astalegale.net') &&
-              (h.includes('/Aste/') || h.includes('/aste/') || h.includes('Detail')) &&
-              h.length > 50
+              h && (h.includes('/Aste/Detail') || h.includes('/aste/detail')) && h.length > 50
             )
           );
           links = [...new Set(allLinks)];
-          console.log('  Fallback: ' + links.length + ' link');
-
-          if (links.length === 0) {
-            const bodySnippet = await page.$eval('body', el => el.innerText.slice(0, 300)).catch(() => '');
-            console.log('  Body snippet: ' + bodySnippet.replace(/\s+/g, ' '));
-          }
+          console.log('  Fallback detail links: ' + links.length);
         } catch (e) {
           console.error('  Errore fallback: ' + e.message);
         }
       }
 
       if (links.length === 0) {
+        const bodySnippet = await page.$eval('body', el => el.innerText.slice(0, 400)).catch(() => '');
+        console.log('  Body snippet: ' + bodySnippet.replace(/\s+/g, ' '));
         console.log('  Nessun link trovato a pagina ' + p);
         if (p === 1) break;
         break;
@@ -180,19 +181,19 @@ async function scrapeDetail(page, link) {
     '.prezzo-base strong','.prezzo strong','[class*="prezzo"] strong',
     '[class*="prezzo"]','.base-price','.price',
     'td:has-text("Prezzo base") + td','td:has-text("Prezzo") + td',
-    '[data-prezzo]','.importo','dt:has-text("Prezzo") + dd',
+    'dt:has-text("Prezzo") + dd','.importo',
   ]);
   const prezzo = normalizePrezzo(prezzoRaw);
   if (!prezzo) return null;
 
-  const tribunale = await get(['td:has-text("Tribunale") + td','.tribunale','[class*="tribunale"]','th:has-text("Tribunale") ~ td']);
-  const dataAsta  = await get(['td:has-text("Data") + td','.data-asta','[class*="data-vendita"]','.auction-date']);
-  const mqRaw     = await get(['td:has-text("Superficie") + td','.superficie','[class*="mq"]']);
-  const stato     = await get(['td:has-text("Occupazione") + td','.occupazione','[class*="occup"]','td:has-text("Stato") + td']) || 'Da verificare';
-  const catEl     = await get(['td:has-text("Categoria catastale") + td','td:has-text("Categoria") + td','[class*="categoria"]']);
+  const tribunale  = await get(['td:has-text("Tribunale") + td','.tribunale','[class*="tribunale"]']);
+  const dataAsta   = await get(['td:has-text("Data") + td','.data-asta','[class*="data-vendita"]']);
+  const mqRaw      = await get(['td:has-text("Superficie") + td','.superficie','[class*="mq"]']);
+  const stato      = await get(['td:has-text("Occupazione") + td','.occupazione','[class*="occup"]','td:has-text("Stato") + td']) || 'Da verificare';
+  const catEl      = await get(['td:has-text("Categoria catastale") + td','td:has-text("Categoria") + td','[class*="categoria"]']);
   const indirizzoEl = await get(['.indirizzo','[class*="address"]','td:has-text("Indirizzo") + td','.localita','td:has-text("Comune") + td']);
-  const scadRaw   = await get(['td:has-text("Scadenza") + td','.scadenza']);
-  const rialzoRaw = await get(['td:has-text("Rialzo") + td','.rialzo-minimo']);
+  const scadRaw    = await get(['td:has-text("Scadenza") + td','.scadenza']);
+  const rialzoRaw  = await get(['td:has-text("Rialzo") + td','.rialzo-minimo']);
   const mercatoRaw = await get(['td:has-text("Valore stimato") + td','td:has-text("Valore di mercato") + td']);
   const caparraRaw = await get(['td:has-text("Cauzione") + td','.cauzione','td:has-text("Caparra") + td']);
   const astaNumRaw = await get(['.numero-asta','td:has-text("Esperimento") + td','td:has-text("N. vendita") + td']);
